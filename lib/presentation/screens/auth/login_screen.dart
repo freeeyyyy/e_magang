@@ -187,58 +187,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 24),
-
-                  // Demo Credentials Info Card
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.white12),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.info_outline, color: Colors.amber, size: 18),
-                            SizedBox(width: 8),
-                            Text(
-                              'Akun Percobaan (Demo):',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        GestureDetector(
-                          onTap: () {
-                            _emailController.text = 'siswa@emagang.id';
-                            _passwordController.text = 'password123';
-                          },
-                          child: const Text(
-                            '• Siswa: siswa@emagang.id / password123 (Tap isi)',
-                            style: TextStyle(color: Colors.white70, fontSize: 12, decoration: TextDecoration.underline),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        GestureDetector(
-                          onTap: () {
-                            _emailController.text = 'ortu@emagang.id';
-                            _passwordController.text = 'password123';
-                          },
-                          child: const Text(
-                            '• Orang Tua: ortu@emagang.id / password123 (Tap isi)',
-                            style: TextStyle(color: Colors.white70, fontSize: 12, decoration: TextDecoration.underline),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  // Info demo dihapus agar tampilan siap pakai/professional
                 ],
               ),
             ),

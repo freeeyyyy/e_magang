@@ -13,9 +13,9 @@ class AuthProvider extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
   bool _initialized = false;
+  bool _isLoggingIn = false; // Guard: mencegah onUnauthorized selama login
 
   AuthProvider(this._authRepository, this._dioClient, this._secureStorage) {
-    // Register auto-logout hook for token expiration / unauthorized error
     _dioClient.onUnauthorized = () {
       _handleTokenExpired();
     };
@@ -33,6 +33,8 @@ class AuthProvider extends ChangeNotifier {
     try {
       final hasSession = await _authRepository.checkSession();
       if (hasSession) {
+        final token = await _secureStorage.getToken();
+        _dioClient.updateToken(token);
         _user = await _secureStorage.getUser();
       }
     } catch (_) {
@@ -43,21 +45,27 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  // Login
   Future<bool> login(String email, String password) async {
+    _isLoggingIn = true; // Blokir onUnauthorized selama login
     _setLoading(true);
     _clearError();
 
     try {
-      _user = await _authRepository.login(email: email, password: password);
+      final user = await _authRepository.login(email: email, password: password);
+      // Sinkronkan token baru langsung ke DioClient in-memory
+      _dioClient.updateToken(user.token);
+      _user = user;
+      _isLoggingIn = false;
       _setLoading(false);
       return true;
     } on ApiException catch (e) {
       _errorMessage = e.message;
+      _isLoggingIn = false;
       _setLoading(false);
       return false;
     } catch (e) {
-      _errorMessage = 'Terjadi kesalahan tidak terduga';
+      _errorMessage = 'Terjadi kesalahan: $e';
+      _isLoggingIn = false;
       _setLoading(false);
       return false;
     }
@@ -72,6 +80,7 @@ class AuthProvider extends ChangeNotifier {
     } catch (_) {
     } finally {
       _user = null;
+      _dioClient.updateToken(null); // Bersihkan token di DioClient
       _isLoading = false;
       notifyListeners();
     }
@@ -79,8 +88,12 @@ class AuthProvider extends ChangeNotifier {
 
   // Auto logout callback on token expired
   void _handleTokenExpired() {
+    // Jangan logout paksa jika sedang dalam proses login
+    if (_isLoggingIn) return;
+    
     if (_user != null) {
       _user = null;
+      _dioClient.updateToken(null);
       _errorMessage = 'Sesi Anda telah berakhir. Silakan masuk kembali.';
       _secureStorage.clearSession();
       notifyListeners();

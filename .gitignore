@@ -43,3 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Backend related
+backend/node_modules/
+backend/database.db
+backend/inspect_db.js
+

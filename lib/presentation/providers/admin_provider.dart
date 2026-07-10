@@ -1,17 +1,16 @@
 import 'package:flutter/material.dart';
-import '../../data/datasources/shared_data_store.dart';
+import '../../core/network/dio_client.dart';
 import '../../data/models/absensi_model.dart';
 import '../../data/models/laporan_model.dart';
 import '../../data/models/izin_model.dart';
 
-/// Model untuk data siswa yang dikelola adminq
 class SiswaAdminData {
   final String id;
   final String nama;
   final String nis;
   final String sekolah;
   final String tempatMagang;
-  final String status; // Aktif, Selesai, Cuti
+  final String status;
   final DateTime tanggalMulai;
   final DateTime tanggalSelesai;
   final List<AbsensiModel> absensi;
@@ -38,21 +37,26 @@ class SiswaAdminData {
   int get totalIzin => absensi.where((a) => a.statusMasuk == 'Izin').length;
   int get totalHariMagang => tanggalSelesai.difference(tanggalMulai).inDays;
   double get progressMagang {
-    final total = totalHariMagang;
-    if (total <= 0) return 0;
-    final berlalu = DateTime.now().difference(tanggalMulai).inDays;
-    return (berlalu / total).clamp(0.0, 1.0);
+    const targetHari = 90;
+    return (totalHadir / targetHari).clamp(0.0, 1.0);
   }
 }
 
 class AdminProvider extends ChangeNotifier {
+  final DioClient _dioClient;
+  
   List<SiswaAdminData> _daftarSiswa = [];
   bool _isLoading = false;
   String? _error;
 
+  int _sertifikatPendingCount = 0;
+  int _unreadChatCount = 0;
+
   // Filter state
-  String _filterStatus = 'Semua'; // Semua, Aktif, Selesai
+  String _filterStatus = 'Semua';
   DateTime _filterTanggal = DateTime.now();
+
+  AdminProvider(this._dioClient);
 
   List<SiswaAdminData> get daftarSiswa => _daftarSiswa;
   bool get isLoading => _isLoading;
@@ -62,6 +66,7 @@ class AdminProvider extends ChangeNotifier {
 
   // ─── STATISTIK DASHBOARD ───────────────────────────────────────────
   int get totalSiswaAktif => _daftarSiswa.where((s) => s.status == 'Aktif').length;
+  
   int get absensiHariIni {
     final today = DateTime.now();
     return _daftarSiswa.where((s) =>
@@ -73,6 +78,7 @@ class AdminProvider extends ChangeNotifier {
       )
     ).length;
   }
+
   int get totalLaporanPending {
     int count = 0;
     for (final s in _daftarSiswa) {
@@ -80,6 +86,7 @@ class AdminProvider extends ChangeNotifier {
     }
     return count;
   }
+
   int get totalIzinPending {
     int count = 0;
     for (final s in _daftarSiswa) {
@@ -87,6 +94,9 @@ class AdminProvider extends ChangeNotifier {
     }
     return count;
   }
+
+  int get totalSertifikatPending => _sertifikatPendingCount;
+  int get totalUnreadChat => _unreadChatCount;
 
   // ─── LAPORAN (semua siswa) ──────────────────────────────────────────
   List<Map<String, dynamic>> get semuaLaporan {
@@ -127,7 +137,6 @@ class AdminProvider extends ChangeNotifier {
       if (absen.isNotEmpty) {
         result.add({'siswa': s, 'absensi': absen.first});
       } else {
-        // Tidak ada record = Alpa
         result.add({
           'siswa': s,
           'absensi': AbsensiModel(
@@ -152,207 +161,145 @@ class AdminProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Dipanggil dari luar (misal screen sertifikat) untuk refresh UI
   void notifyDataChanged() {
-    notifyListeners();
+    loadData();
   }
-
-  int get totalSertifikatPending => SharedDataStore.instance.totalSertifikatPending;
-  int get totalUnreadChat => SharedDataStore.instance.totalUnreadAdmin;
 
   List<SiswaAdminData> get filteredSiswa {
     if (_filterStatus == 'Semua') return _daftarSiswa;
     return _daftarSiswa.where((s) => s.status == _filterStatus).toList();
   }
 
-  // ─── LOAD DATA ─────────────────────────────────────────────────────
-  /// Muat data siswa. Data absensi/laporan/izin diambil dari SharedDataStore
-  /// sehingga terintegrasi langsung dengan input dari siswa.
+  // ─── LOAD DATA DARI SERVER API ──────────────────────────────────────
   Future<void> loadData() async {
     _isLoading = true;
+    _error = null;
     notifyListeners();
-    await Future.delayed(const Duration(milliseconds: 600));
 
-    final store = SharedDataStore.instance;
-    final baseData = _generateBaseSiswaData();
+    try {
+      // 1. Ambil data list siswa
+      final resSiswa = await _dioClient.get('/admin/siswa');
+      final List rawSiswa = resSiswa.data;
 
-    // Gabungkan data siswa dengan data real dari SharedDataStore
-    _daftarSiswa = baseData.map((siswa) {
-      return SiswaAdminData(
-        id: siswa.id,
-        nama: siswa.nama,
-        nis: siswa.nis,
-        sekolah: siswa.sekolah,
-        tempatMagang: siswa.tempatMagang,
-        status: siswa.status,
-        tanggalMulai: siswa.tanggalMulai,
-        tanggalSelesai: siswa.tanggalSelesai,
-        // Ambil data live dari SharedDataStore
-        absensi: store.getAbsensi(siswa.id),
-        laporan: store.getLaporan(siswa.id),
-        izin: store.getIzin(siswa.id),
-      );
-    }).toList();
+      _daftarSiswa = rawSiswa.map((item) {
+        final List rawAbsen = item['absensi'] ?? [];
+        final List rawLaporan = item['laporan'] ?? [];
+        final List rawIzin = item['izin'] ?? [];
 
-    _isLoading = false;
-    notifyListeners();
+        // Parsing datetime safety
+        final DateTime tglMulai = item['tanggal_mulai'] != null 
+            ? DateTime.parse(item['tanggal_mulai']) 
+            : DateTime.now().subtract(const Duration(days: 30));
+        final DateTime tglSelesai = item['tanggal_selesai'] != null 
+            ? DateTime.parse(item['tanggal_selesai']) 
+            : DateTime.now().add(const Duration(days: 60));
+
+        return SiswaAdminData(
+          id: item['id'],
+          nama: item['nama'],
+          nis: item['nis'] ?? '-',
+          sekolah: item['sekolah'] ?? '-',
+          tempatMagang: item['tempat_magang'] ?? '-',
+          status: item['status'] ?? 'Aktif',
+          tanggalMulai: tglMulai,
+          tanggalSelesai: tglSelesai,
+          absensi: rawAbsen.map((e) => AbsensiModel.fromJson(e)).toList(),
+          laporan: rawLaporan.map((e) => LaporanModel.fromJson(e)).toList(),
+          izin: rawIzin.map((e) => IzinModel.fromJson(e)).toList(),
+        );
+      }).toList();
+
+      // 2. Ambil data statistik admin (badge counts)
+      final resStats = await _dioClient.get('/admin/stats');
+      final stats = resStats.data;
+      _sertifikatPendingCount = stats['sertifikatPending'] ?? 0;
+      _unreadChatCount = stats['unreadChats'] ?? 0;
+
+    } catch (e) {
+      _error = 'Gagal memuat data dari server: $e';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
   }
 
-  // ─── APPROVE / REJECT LAPORAN ──────────────────────────────────────
+  // ─── TAMBAH SISWA BARU ──────────────────────────────────────────────
+  Future<bool> tambahSiswa({
+    required String nama,
+    required String email,
+    required String password,
+    required String nis,
+    required String sekolah,
+    required String tempatMagang,
+  }) async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await _dioClient.post('/admin/siswa', data: {
+        'nama': nama,
+        'email': email,
+        'password': password,
+        'nis': nis,
+        'sekolah': sekolah,
+        'tempat_magang': tempatMagang,
+      });
+      
+      // Reload list setelah berhasil menambahkan
+      await loadData();
+      return true;
+    } catch (e) {
+      _error = e.toString().contains('400') 
+          ? 'Email atau NIS sudah terdaftar' 
+          : 'Gagal menambahkan siswa: $e';
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // ─── VERIFIKASI LAPORAN ──────────────────────────────────────────────
   Future<bool> verifikasiLaporan({
     required String siswaId,
     required String laporanId,
     required String status,
     String? catatan,
   }) async {
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    // Update di SharedDataStore → siswa bisa lihat hasil verifikasi
-    SharedDataStore.instance.updateStatusLaporan(siswaId, laporanId, status, catatan);
-
-    // Reload agar UI admin terupdate
-    await loadData();
-    return true;
+    try {
+      await _dioClient.post('/admin/laporan/verify', data: {
+        'laporanId': laporanId,
+        'status': status,
+        'catatan': catatan,
+      });
+      await loadData();
+      return true;
+    } catch (e) {
+      _error = 'Gagal memverifikasi laporan: $e';
+      notifyListeners();
+      return false;
+    }
   }
 
-  // ─── APPROVE / REJECT IZIN ─────────────────────────────────────────
+  // ─── VERIFIKASI IZIN ────────────────────────────────────────────────
   Future<bool> verifikasiIzin({
     required String siswaId,
     required String izinId,
     required String status,
     String? keterangan,
   }) async {
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    // Update di SharedDataStore → siswa bisa lihat hasil verifikasi
-    SharedDataStore.instance.updateStatusIzin(siswaId, izinId, status);
-
-    // Reload agar UI admin terupdate
-    await loadData();
-    return true;
-  }
-
-  // ─── BASE SISWA (profil saja, data live dari SharedDataStore) ────────
-  List<SiswaAdminData> _generateBaseSiswaData() {
-    final now = DateTime.now();
-
-    // Helper untuk membuat absensi
-    List<AbsensiModel> buatAbsensi(int jumlahHari, double tingkatKehadiran) {
-      final List<AbsensiModel> list = [];
-      for (int i = jumlahHari; i >= 1; i--) {
-        final tgl = now.subtract(Duration(days: i));
-        if (tgl.weekday == DateTime.saturday || tgl.weekday == DateTime.sunday) continue;
-        final rand = i % 10;
-        String status;
-        if (rand < 1) {
-          status = 'Alpa';
-        } else if (rand < 2) {
-          status = 'Terlambat';
-        } else {
-          status = 'Hadir';
-        }
-        if (rand >= (tingkatKehadiran * 10).round()) status = 'Alpa';
-        list.add(AbsensiModel(
-          id: 'abs_${tgl.day}_${tgl.month}',
-          tanggal: tgl,
-          waktuMasuk: status != 'Alpa'
-              ? tgl.copyWith(hour: status == 'Terlambat' ? 9 : 8, minute: 0)
-              : null,
-          waktuKeluar: status != 'Alpa'
-              ? tgl.copyWith(hour: 17, minute: 0)
-              : null,
-          statusMasuk: status,
-          statusKeluar: status != 'Alpa' ? 'Tepat Waktu' : null,
-          lokasiMasuk: 'PT Solusi Teknologi Indonesia',
-          isValid: status != 'Alpa',
-        ));
-      }
-      return list;
+    try {
+      await _dioClient.post('/admin/izin/verify', data: {
+        'izinId': izinId,
+        'status': status,
+      });
+      await loadData();
+      return true;
+    } catch (e) {
+      _error = 'Gagal memverifikasi izin: $e';
+      notifyListeners();
+      return false;
     }
-
-    // Helper untuk membuat laporan
-    List<LaporanModel> buatLaporan(List<String> kegiatanList, List<String> statusList) {
-      List<LaporanModel> list = [];
-      for (int i = 0; i < kegiatanList.length; i++) {
-        list.add(LaporanModel(
-          id: 'lap_${i + 1}',
-          tanggal: now.subtract(Duration(days: (kegiatanList.length - i) * 2)),
-          kegiatan: kegiatanList[i],
-          dokumentasiUrl: i % 3 == 0 ? 'https://docs.emagang.id/laporan_$i.pdf' : null,
-          status: statusList[i % statusList.length],
-          catatanPembimbing: statusList[i % statusList.length] == 'Ditolak'
-              ? 'Mohon perjelas deskripsi kegiatan.' : null,
-        ));
-      }
-      return list.reversed.toList();
-    }
-
-    // Helper untuk membuat izin
-    List<IzinModel> buatIzin(List<Map<String, String>> izinData) {
-      return izinData.asMap().entries.map((e) {
-        final i = e.key;
-        final d = e.value;
-        final tglMulai = now.subtract(Duration(days: 20 - i * 7));
-        return IzinModel(
-          id: 'izin_${i + 1}',
-          tanggalMulai: tglMulai,
-          tanggalSelesai: tglMulai.add(const Duration(days: 1)),
-          tipe: d['tipe']!,
-          keterangan: d['ket']!,
-          lampiranUrl: d['tipe'] == 'Sakit' ? 'https://docs.emagang.id/surat_sakit_$i.jpg' : null,
-          status: d['status']!,
-          diajukanPada: tglMulai.subtract(const Duration(days: 1)),
-        );
-      }).toList();
-    }
-
-    // ID harus sesuai dengan key di SharedDataStore
-    // Perusahaan: PT. Media Balai Nusa Astronet Bengkalis
-    return [
-      SiswaAdminData(
-        id: 'siswa_001',
-        nama: 'Robert James',
-        nis: '20240901',
-        sekolah: 'SMK Negeri 1 Bengkalis',
-        tempatMagang: SharedDataStore.perusahaan,
-        status: 'Aktif',
-        tanggalMulai: now.subtract(const Duration(days: 60)),
-        tanggalSelesai: now.add(const Duration(days: 30)),
-        absensi: [], laporan: [], izin: [],
-      ),
-      SiswaAdminData(
-        id: 'siswa_002',
-        nama: 'Alicia Putri',
-        nis: '20240902',
-        sekolah: 'SMK Negeri 2 Bengkalis',
-        tempatMagang: SharedDataStore.perusahaan,
-        status: 'Aktif',
-        tanggalMulai: now.subtract(const Duration(days: 45)),
-        tanggalSelesai: now.add(const Duration(days: 45)),
-        absensi: [], laporan: [], izin: [],
-      ),
-      SiswaAdminData(
-        id: 'siswa_003',
-        nama: 'Kevin Pratama',
-        nis: '20240903',
-        sekolah: 'SMK Muhammadiyah Bengkalis',
-        tempatMagang: SharedDataStore.perusahaan,
-        status: 'Aktif',
-        tanggalMulai: now.subtract(const Duration(days: 30)),
-        tanggalSelesai: now.add(const Duration(days: 60)),
-        absensi: [], laporan: [], izin: [],
-      ),
-      SiswaAdminData(
-        id: 'siswa_004',
-        nama: 'Sarah Amelia',
-        nis: '20240904',
-        sekolah: 'SMK Teknologi Riau',
-        tempatMagang: SharedDataStore.perusahaan,
-        status: 'Selesai',
-        tanggalMulai: now.subtract(const Duration(days: 120)),
-        tanggalSelesai: now.subtract(const Duration(days: 10)),
-        absensi: [], laporan: [], izin: [],
-      ),
-    ];
   }
 }

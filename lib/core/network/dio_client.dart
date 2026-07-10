@@ -7,6 +7,9 @@ class DioClient {
   final SecureStorageService _secureStorage;
   void Function()? onUnauthorized;
 
+  // In-memory token cache to ensure instant requests after login
+  String? _token;
+
   DioClient(this._secureStorage, {this.onUnauthorized}) : _dio = Dio() {
     _dio.options = BaseOptions(
       baseUrl: ApiEndpoints.baseUrl,
@@ -19,16 +22,23 @@ class DioClient {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          // Retrieve token from secure storage and append it as Bearer token
-          final token = await _secureStorage.getToken();
-          if (token != null && token.isNotEmpty) {
-            options.headers['Authorization'] = 'Bearer $token';
+          // Gunakan token in-memory jika tersedia, jika tidak ambil dari secure storage
+          String? currentToken = _token;
+          if (currentToken == null || currentToken.isEmpty) {
+            currentToken = await _secureStorage.getToken();
+            _token = currentToken; // Sync back to memory
+          }
+
+          if (currentToken != null && currentToken.isNotEmpty) {
+            options.headers['Authorization'] = 'Bearer $currentToken';
           }
           return handler.next(options);
         },
         onError: (DioException e, handler) {
-          // If response is 401 Unauthorized, call the unauthorized callback
+          // Jika response 401 Unauthorized, panggil callback untuk logout
           if (e.response?.statusCode == 401) {
+            // Bersihkan token in-memory karena sudah tidak valid
+            _token = null;
             if (onUnauthorized != null) {
               onUnauthorized!();
             }
@@ -37,6 +47,11 @@ class DioClient {
         },
       ),
     );
+  }
+
+  // Method untuk langsung memperbarui token in-memory setelah login sukses
+  void updateToken(String? newToken) {
+    _token = newToken;
   }
 
   Dio get dio => _dio;
@@ -98,15 +113,14 @@ class DioClient {
       message = 'Koneksi ke server habis waktu (Timeout)';
     } else if (e.type == DioExceptionType.receiveTimeout) {
       message = 'Server lambat merespon (Receive Timeout)';
-    } else if (e.response != null) {
+    } else if (e.type == DioExceptionType.badResponse) {
       final data = e.response?.data;
       if (data is Map && data.containsKey('message')) {
         message = data['message'];
       } else {
-        message = 'Kesalahan Server (${e.response?.statusCode})';
+        message = 'Gagal memproses permintaan (Error $statusCode)';
       }
     }
-
     return ApiException(message, statusCode: statusCode);
   }
 }

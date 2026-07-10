@@ -8,7 +8,7 @@ import '../models/izin_model.dart';
 
 class OrtuRepositoryImpl implements OrtuRepository {
   final DioClient _dioClient;
-  final bool _useMock = true;
+  final bool _useMock = false;
 
   // Baca dari SharedDataStore agar data real-time sesuai aktivitas siswa
   final _store = SharedDataStore.instance;

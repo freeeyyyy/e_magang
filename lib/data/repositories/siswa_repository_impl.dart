@@ -10,7 +10,7 @@ import '../models/izin_model.dart';
 
 class SiswaRepositoryImpl implements SiswaRepository {
   final DioClient _dioClient;
-  final bool _useMock = true;
+  final bool _useMock = false;
 
   // Gunakan SharedDataStore agar data terlihat oleh admin
   final _store = SharedDataStore.instance;
@@ -213,21 +213,13 @@ class SiswaRepositoryImpl implements SiswaRepository {
     }
 
     try {
-      FormData formData = FormData.fromMap({
-        'kegiatan': kegiatan,
-        'tanggal': DateTime.now().toIso8601String().substring(0, 10),
-      });
-
-      if (lampiranPath != null) {
-        final file = File(lampiranPath);
-        final fileName = file.path.split('/').last;
-        formData.files.add(MapEntry(
-          'dokumentasi',
-          await MultipartFile.fromFile(file.path, filename: fileName),
-        ));
-      }
-
-      final response = await _dioClient.post(ApiEndpoints.laporanHarian, data: formData);
+      final response = await _dioClient.post(
+        ApiEndpoints.laporanHarian,
+        data: {
+          'kegiatan': kegiatan,
+          'tanggal': DateTime.now().toIso8601String().substring(0, 10),
+        },
+      );
       return LaporanModel.fromJson(response.data);
     } on ApiException {
       rethrow;
@@ -288,23 +280,15 @@ class SiswaRepositoryImpl implements SiswaRepository {
     }
 
     try {
-      FormData formData = FormData.fromMap({
-        'tanggal_mulai': tanggalMulai.toIso8601String().substring(0, 10),
-        'tanggal_selesai': tanggalSelesai.toIso8601String().substring(0, 10),
-        'tipe': tipe,
-        'keterangan': keterangan,
-      });
-
-      if (lampiranPath != null) {
-        final file = File(lampiranPath);
-        final fileName = file.path.split('/').last;
-        formData.files.add(MapEntry(
-          'lampiran',
-          await MultipartFile.fromFile(file.path, filename: fileName),
-        ));
-      }
-
-      final response = await _dioClient.post(ApiEndpoints.pengajuanIzin, data: formData);
+      final response = await _dioClient.post(
+        ApiEndpoints.pengajuanIzin,
+        data: {
+          'tanggal_mulai': tanggalMulai.toIso8601String().substring(0, 10),
+          'tanggal_selesai': tanggalSelesai.toIso8601String().substring(0, 10),
+          'tipe': tipe,
+          'keterangan': keterangan,
+        },
+      );
       return IzinModel.fromJson(response.data);
     } on ApiException {
       rethrow;

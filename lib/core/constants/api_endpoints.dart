@@ -1,5 +1,5 @@
 class ApiEndpoints {
-  static const String baseUrl = 'https://api.e-magang.id/api';
+  static const String baseUrl = 'http://localhost:3000/api';
 
   // Auth endpoints
   static const String login = '/auth/login';

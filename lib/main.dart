@@ -46,7 +46,7 @@ void main() async {
           create: (_) => OrtuProvider(ortuRepository),
         ),
         ChangeNotifierProvider<AdminProvider>(
-          create: (_) => AdminProvider(),
+          create: (_) => AdminProvider(dioClient),
         ),
       ],
       child: const EMagangApp(),

@@ -9,7 +9,7 @@ class AuthRepositoryImpl implements AuthRepository {
   final SecureStorageService _secureStorage;
   
   // Set to true to bypass backend and use mock data for testing/demo
-  final bool _useMock = true;
+  final bool _useMock = false;
 
   AuthRepositoryImpl(this._dioClient, this._secureStorage);
 
@@ -73,12 +73,12 @@ class AuthRepositoryImpl implements AuthRepository {
       );
 
       final data = response.data;
-      final user = UserModel.fromJson(data['user']);
       final String token = data['token'];
+      final user = UserModel.fromJson(data['user']).copyWith(token: token);
 
       // Save token and user info
       await _secureStorage.saveToken(token);
-      await _secureStorage.saveUser(user.copyWith(token: token));
+      await _secureStorage.saveUser(user);
 
       return user;
     } on ApiException {
